@@ -3,6 +3,7 @@ import time
 import requests
 import pandas as pd
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
 
@@ -36,9 +37,10 @@ AREA_LIST = [
 ]
 
 CSV_FILE = "data/seoul_population_log.csv"
+KST = ZoneInfo("Asia/Seoul")
 
 
-def fetch_population(area_name):
+def fetch_population(area_name, run_time):
     url = (
         f"http://openapi.seoul.go.kr:8088/"
         f"{API_KEY}/xml/citydata_ppltn/1/5/{quote(area_name)}"
@@ -59,30 +61,43 @@ def fetch_population(area_name):
     max_pop = root.findtext(".//AREA_PPLTN_MAX")
 
     return {
-        "수집시간": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "수집시간": run_time,
         "지역명": area_name,
         "API지역명": root.findtext(".//AREA_NM"),
         "혼잡도": root.findtext(".//AREA_CONGEST_LVL"),
         "혼잡도메시지": root.findtext(".//AREA_CONGEST_MSG"),
         "최소인구": min_pop,
         "최대인구": max_pop,
-        "중앙추정인구": (
-            pd.to_numeric(min_pop, errors="coerce")
-            + pd.to_numeric(max_pop, errors="coerce")
-        ) / 2,
         "업데이트시간": root.findtext(".//PPLTN_TIME"),
     }
 
 
 def main():
+    os.makedirs("data", exist_ok=True)
+
+    run_time = datetime.now(KST).replace(minute=0, second=0, microsecond=0)
+    run_time_str = run_time.strftime("%Y-%m-%d %H:%M:%S")
+
     rows = []
+
+    print("수집 시작:", run_time_str)
 
     for area in AREA_LIST:
         try:
-            row = fetch_population(area)
+            row = fetch_population(area, run_time_str)
             rows.append(row)
-            print("성공:", area, row["혼잡도"])
+
+            print(
+                "성공:",
+                area,
+                row["혼잡도"],
+                row["최소인구"],
+                "~",
+                row["최대인구"],
+            )
+
             time.sleep(1)
+
         except Exception as e:
             print("실패:", area, e)
 
@@ -91,7 +106,9 @@ def main():
 
     new_df = pd.DataFrame(rows)
 
-    os.makedirs("data", exist_ok=True)
+    new_df["최소인구"] = pd.to_numeric(new_df["최소인구"], errors="coerce")
+    new_df["최대인구"] = pd.to_numeric(new_df["최대인구"], errors="coerce")
+    new_df["중앙추정인구"] = (new_df["최소인구"] + new_df["최대인구"]) / 2
 
     if os.path.exists(CSV_FILE):
         old_df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
@@ -99,9 +116,19 @@ def main():
     else:
         df = new_df
 
+    df = df.drop_duplicates(
+        subset=["수집시간", "지역명"],
+        keep="last"
+    )
+
+    df["수집시간"] = pd.to_datetime(df["수집시간"], errors="coerce")
+    df = df.sort_values(["수집시간", "지역명"])
+    df["수집시간"] = df["수집시간"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
     df.to_csv(CSV_FILE, index=False, encoding="utf-8-sig")
 
-    print("저장 완료:", CSV_FILE)
+    print("CSV 누적 저장 완료:", CSV_FILE)
+    print("총 행 수:", len(df))
 
 
 if __name__ == "__main__":
