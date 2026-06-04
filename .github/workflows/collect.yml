@@ -2,8 +2,9 @@ name: Collect Seoul Population Data
 
 on:
   workflow_dispatch:
+
   schedule:
-    - cron: "0 * * * *"
+    - cron: "7 * * * *"
 
 permissions:
   contents: write
@@ -34,6 +35,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add data/seoul_population_log.csv
-          git commit -m "Update Seoul population data" || echo "No changes to commit"
+          git commit -m "Update Seoul population data" || echo "No changes"
           git pull --rebase
           git push
+          
